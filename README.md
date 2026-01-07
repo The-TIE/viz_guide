@@ -1,61 +1,89 @@
-# Visualization Guide Tester
+# Plotly Visualization Style Guide
 
-AI-powered tool for testing and improving a Plotly visualization style guide.
+A comprehensive style guide for creating consistent, publication-ready Plotly visualizations. Designed to be used directly by humans or as context for AI code generation.
 
-## Prerequisites
+## Why This Guide?
 
-Install [uv](https://docs.astral.sh/uv/getting-started/installation/) if not already installed:
+Data visualization is deceptively hard to get right. Default Plotly outputs often have:
+- Ugly tick labels (SI notation showing "G" instead of "B" for billions)
+- Poor dark theme styling
+- Cluttered legends and annotations
+- Inconsistent formatting across charts
 
+This guide codifies best practices into actionable rules that produce clean, professional visualizations every time.
+
+## The Guide
+
+The guide lives in [`guide/`](guide/) as 14 markdown sections:
+
+| Section | What It Covers |
+|---------|----------------|
+| [00 Index](guide/00_index.md) | Quick reference and templates |
+| [01 Data Analysis](guide/01_data_analysis.md) | Understanding your data before charting |
+| [02 Intent](guide/02_intent.md) | Choosing the right visualization type |
+| [03 Chart Selection](guide/03_chart_selection.md) | When to use each chart type |
+| [04 Encoding](guide/04_encoding.md) | Mapping data to visual properties |
+| [05 Axes](guide/05_axes.md) | Axis configuration and tick formatting |
+| [06 Color](guide/06_color.md) | Color scales, themes, accessibility |
+| [07 Text](guide/07_text.md) | Labels, titles, number formatting |
+| [08 Layout](guide/08_layout.md) | Margins, spacing, positioning |
+| [09 Legends](guide/09_legends.md) | Legend placement and styling |
+| [10 Hover](guide/10_hover.md) | Tooltips and hover templates |
+| [11 Interactions](guide/11_interactions.md) | Zoom, pan, selection |
+| [12 Annotations](guide/12_annotations.md) | Text annotations and shapes |
+| [13 Accessibility](guide/13_accessibility.md) | Making charts accessible |
+| [14 Performance](guide/14_performance.md) | Optimizing large datasets |
+
+## Using the Guide
+
+### For Humans
+Read the guide sections directly. Each includes code examples and anti-patterns to avoid.
+
+### For AI Code Generation
+Include relevant guide sections as context when prompting an LLM to generate Plotly code. The guide is structured for easy retrieval and includes explicit rules the model can follow.
+
+### With the Tester App
+The included Streamlit app generates guide-compliant visualizations and helps refine the guide itself through iterative feedback.
+
+## Tester App
+
+The app serves two purposes:
+1. **Generate visualizations** that follow the guide
+2. **Refine the guide** by capturing feedback on what works and what doesn't
+
+### Setup
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/):
 ```bash
-# macOS/Linux
 curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Or with Homebrew
-brew install uv
-
-# Windows
-powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 ```
 
-## Quick Start
+Clone and run:
+```bash
+git clone git@github.com:The-TIE/viz_guide.git
+cd viz_guide
+uv sync
+cp .env.example .env  # Add your Anthropic API key
+uv run streamlit run app/main.py
+```
 
-1. Clone and setup:
-   ```bash
-   git clone <repo-url>
-   cd viz_guide
-   uv sync
-   ```
+### Workflow
 
-2. Configure API key:
-   ```bash
-   cp .env.example .env
-   # Edit .env with your Anthropic API key
-   ```
+1. Describe a visualization and paste sample data
+2. Review the generated chart, provide feedback
+3. Iterate until the chart meets standards
+4. Approve to capture the result
+5. Review suggested guide improvements, apply via PR
 
-3. Run the app:
-   ```bash
-   uv run streamlit run app/main.py
-   ```
+## Contributing
 
-## Workflow
-
-1. **Generate**: Describe a visualization, paste data sample
-2. **Refine**: Provide feedback, iterate until satisfied
-3. **Approve**: When chart is correct, approve to save capture
-4. **Suggest**: Review guide improvements, apply via PR
-
-## Contributing Guide Changes
-
-Guide improvements should go through PR review:
-
-1. Create a branch: `git checkout -b guide/your-improvement`
-2. Apply suggestions or edit guide/*.md directly
-3. Test with the app to verify improvement works
-4. Push and create PR for review
+Guide improvements go through PR review. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Project Structure
 
-- `app/` - Streamlit application
-- `guide/` - 14-section visualization style guide
-- `feedback/captures/` - Gallery of approved visualizations
-- `references/` - Logo/watermark images
+```
+guide/           # The style guide (14 markdown sections)
+app/             # Streamlit tester application
+feedback/captures/  # Gallery of approved visualizations
+references/      # Logo and watermark images
+```
