@@ -1,0 +1,25 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Session data (local to each tester)
+feedback/sessions/
+feedback/feedback.jsonl
+feedback/bad_apples/
+
+# Keep captures/ for gallery (tracked)
+
+# Claude local config
+.claude/
