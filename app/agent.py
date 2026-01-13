@@ -1,21 +1,25 @@
-"""VizGuide Agent - Agentic workflow for visualization code generation."""
+"""VizGuide Agent - Agentic workflow using Claude Agent SDK (keyless mode).
 
-import os
+Note: MCP tool integration in the SDK is currently broken, so we use a
+simplified approach that includes relevant guide context directly in the prompt.
+"""
+
+import asyncio
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 
-import anthropic
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 try:
-    from agent_tools import TOOL_DEFINITIONS, execute_tool
+    from agent_tools import classify_intent, search_guide, get_chart_config, get_critical_rules
     from core_rules import get_core_rules
 except ImportError:
-    from .agent_tools import TOOL_DEFINITIONS, execute_tool
+    from .agent_tools import classify_intent, search_guide, get_chart_config, get_critical_rules
     from .core_rules import get_core_rules
 
 
-# Maximum number of tool-calling turns to prevent infinite loops
-MAX_TURNS = 10
+# Maximum number of turns
+MAX_TURNS = 1  # Single turn since we're not using tools
 
 
 def extract_code(response_text: str) -> str:
@@ -44,98 +48,162 @@ def extract_code(response_text: str) -> str:
     return response_text
 
 
-class VizGuideAgent:
-    """Agent for generating visualizations with progressive context loading."""
+def _gather_context(description: str) -> dict:
+    """Pre-gather relevant context using the tool functions directly.
 
-    def __init__(
-        self,
-        api_key: str | None = None,
-        model: str = "claude-sonnet-4-5-20250929",
-        watermark: str = "none",
-    ):
-        """
-        Initialize the agent.
+    Returns dict with intent classification and relevant guide sections.
+    """
+    # Classify intent
+    intent_result = classify_intent(description)
 
-        Args:
-            api_key: Anthropic API key (or uses ANTHROPIC_API_KEY env var)
-            model: Model to use for generation
-            watermark: Watermark type ('none', 'labs', 'qf', 'tie')
-        """
-        api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
+    # Get chart config for suggested charts
+    chart_configs = []
+    for chart_type in intent_result.get("suggested_charts", [])[:2]:
+        config = get_chart_config(chart_type)
+        if config and "No specific guidance" not in config:
+            chart_configs.append(f"### {chart_type} Chart Config\n{config}")
 
-        self.client = anthropic.Anthropic(api_key=api_key)
-        self.model = model
-        self.watermark = watermark
-        self.core_rules = get_core_rules(watermark_type=watermark)
+    # Get critical rules for primary chart type
+    primary_chart = intent_result.get("suggested_charts", ["line"])[0]
+    critical = get_critical_rules(primary_chart)
 
-    def _build_system_prompt(self) -> str:
-        """Build the system prompt with core rules."""
-        return f"""You are a Plotly visualization expert. Generate Python code that creates
-publication-ready charts following the visualization guidelines.
+    # Search for relevant guide sections
+    search_queries = [
+        f"{intent_result['intent']} {intent_result['data_type']}",
+        "hover template formatting",
+    ]
+    search_results = []
+    for q in search_queries:
+        result = search_guide(q, limit=3)
+        if result and "No results" not in result:
+            search_results.append(result)
 
-{self.core_rules}
+    return {
+        "intent": intent_result,
+        "chart_configs": chart_configs,
+        "critical_rules": critical,
+        "search_results": search_results,
+    }
 
-## Output Format
-Return ONLY Python code wrapped in ```python``` markers.
-The code MUST:
-- Define a variable `fig` containing the Plotly figure
-- Be complete and runnable (no placeholders)
-- Include all necessary imports
-- Apply dark theme and formatting from core rules
+
+def _build_system_prompt(watermark: str, context: dict) -> str:
+    """Build the system prompt with core rules and gathered context."""
+    core_rules = get_core_rules(watermark_type=watermark)
+
+    # Format intent classification
+    intent = context["intent"]
+    intent_section = f"""## Request Analysis
+- Intent: {intent['intent']}
+- Data Type: {intent['data_type']}
+- Suggested Charts: {', '.join(intent['suggested_charts'])}
+- Confidence: {intent['confidence']}
 """
 
-    def _execute_tools_parallel(self, response) -> list[dict]:
-        """Execute all tool calls from a response in parallel."""
-        tool_calls = [block for block in response.content if block.type == "tool_use"]
+    # Format chart configs
+    chart_section = ""
+    if context["chart_configs"]:
+        chart_section = "\n## Chart Type Guidance\n" + "\n\n".join(context["chart_configs"][:2])
 
-        if not tool_calls:
-            return []
+    # Template functions section - STRONG preference for templates
+    template_section = """
+## Template Functions - USE THESE FIRST
 
-        results = []
+**IMPORTANT: Always use a template function if one fits. Only write custom code if no template matches.**
 
-        # Execute tools in parallel
-        with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
-            futures = {}
-            for tc in tool_calls:
-                future = executor.submit(execute_tool, tc.name, tc.input)
-                futures[future] = tc
+### Decision Tree:
+1. Comparing 2-5 time series? → `multi_line_chart()`
+   - Raw values: `normalize=False`
+   - Indexed to 100: `normalize=True` or `normalize='indexed'`
+   - Percentage returns from 0%: `normalize='returns'`
+2. Single time series trend? → `line_chart()`
+3. 6+ time series? → `small_multiples_chart()`
+4. Ranking or categorical comparison? → `horizontal_bar_chart(sort=True)`
+5. Composition over time? → `stacked_bar_chart()`
+6. Comparing groups side-by-side? → `grouped_bar_chart()`
+7. Simple value comparison? → `bar_chart()`
 
-            for future in as_completed(futures):
-                tc = futures[future]
-                try:
-                    result = future.result()
-                except Exception as e:
-                    result = f"Error executing {tc.name}: {str(e)}"
+### Function Signatures:
 
-                results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
-                    "content": result,
-                })
+```python
+from app.templates import multi_line_chart, line_chart, horizontal_bar_chart
 
-        return results
+# BTC vs ETH cumulative returns - template handles ALL the calculation and formatting
+fig = multi_line_chart(
+    df,
+    x_column='date',
+    y_columns=['BTC_price', 'ETH_price'],  # Use raw price columns, template calculates returns
+    title='BTC vs ETH Cumulative Returns',
+    normalize='returns'  # This converts to % returns from 0% automatically
+)
+# That's it! No manual calculation needed. Template adds reference line at 0%, proper axis labels, etc.
 
-    def generate(
-        self,
-        description: str,
-        data_sample: str,
-        temperature: float = 0.3,
-    ) -> dict:
-        """
-        Generate visualization code using agentic workflow.
+# Single series
+fig = line_chart(df, x_column='date', y_column='price', title='Title')
 
-        Args:
-            description: User's visualization description
-            data_sample: String representation of the data
-            temperature: Temperature for generation
+# Rankings
+fig = horizontal_bar_chart(df, category_column='name', value_column='volume', title='Title', sort=True)
+```
 
-        Returns:
-            dict with "code", "raw_response", and "tool_calls" keys
-        """
-        # Build user message
-        user_message = f"""Generate a Plotly visualization for the following:
+### When to Use Custom Code (ONLY these cases):
+- Specialized chart type not in templates (candlestick, heatmap, sankey, etc.)
+- Complex multi-chart dashboard layouts
+- Highly custom interactivity requirements
+
+**DEFAULT TO TEMPLATES** - they handle dark theme, colors, hover, legends, and all formatting automatically.
+**DO NOT pass colors parameter** - templates use the standard colorway by default.
+"""
+
+    # Format critical rules
+    critical_section = f"\n## Critical Rules for {intent['suggested_charts'][0]}\n{context['critical_rules']}"
+
+    # Format search results
+    search_section = ""
+    if context["search_results"]:
+        search_section = "\n## Additional Guidance\n" + "\n---\n".join(context["search_results"][:2])
+
+    return f"""You are a Plotly visualization expert. Generate Python code for publication-ready charts.
+
+{template_section}
+
+{intent_section}
+{chart_section}
+{critical_section}
+{search_section}
+
+## Styling Rules (for custom code only - templates handle this automatically)
+{core_rules}
+
+## Output
+Return ONLY a Python code block. The code must define a `fig` variable.
+If a template matches, use it - the code should be ~5 lines.
+"""
+
+
+async def generate_visualization_async(
+    description: str,
+    data_sample: str,
+    model: str = "claude-sonnet-4-5-20250929",
+    temperature: float = 0.3,
+    watermark: str = "none",
+) -> dict:
+    """
+    Generate visualization code using Claude Agent SDK (keyless mode).
+
+    Args:
+        description: User's visualization description
+        data_sample: String representation of the data
+        model: Model to use for generation
+        temperature: Temperature for generation
+        watermark: Watermark type ('none', 'labs', 'qf', 'tie')
+
+    Returns:
+        dict with "code", "raw_response", "tool_calls", and "turns" keys
+    """
+    # Pre-gather context using tool functions directly
+    context = _gather_context(description)
+
+    # Build user message
+    user_message = f"""Generate a Plotly visualization for the following:
 
 DESCRIPTION:
 {description}
@@ -143,75 +211,47 @@ DESCRIPTION:
 DATA AVAILABLE (inspect carefully before writing code):
 {data_sample}
 
-CRITICAL: Before writing any code:
-1. Use classify_intent to understand what visualization is needed
-2. Use get_chart_config to get guidance for the chart type
-3. Use search_guide to find relevant formatting/styling guidance
-4. Use get_critical_rules to get must-follow rules
-
 Only reference columns that are explicitly listed in the data above.
 Do not assume or invent column names."""
 
-        messages = [{"role": "user", "content": user_message}]
-        all_tool_calls = []
+    options = ClaudeAgentOptions(
+        system_prompt=_build_system_prompt(watermark, context),
+        max_turns=MAX_TURNS,
+        model=model,
+        cwd=str(Path(__file__).parent.parent),
+    )
 
-        # Agent loop
-        for turn in range(MAX_TURNS):
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=4096,
-                temperature=temperature,
-                system=self._build_system_prompt(),
-                tools=TOOL_DEFINITIONS,
-                messages=messages,
-            )
+    raw_response = ""
+    turns = 0
 
-            # Handle tool calls
-            if response.stop_reason == "tool_use":
-                # Execute tools in parallel
-                tool_results = self._execute_tools_parallel(response)
+    async for message in query(prompt=user_message, options=options):
+        if isinstance(message, AssistantMessage):
+            turns += 1
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    raw_response += block.text
 
-                # Track tool calls for debugging
-                for tc in response.content:
-                    if tc.type == "tool_use":
-                        all_tool_calls.append({
-                            "name": tc.name,
-                            "input": tc.input,
-                        })
+    code = extract_code(raw_response)
 
-                # Add assistant response and tool results to messages
-                messages.append({"role": "assistant", "content": response.content})
-                messages.append({"role": "user", "content": tool_results})
+    # Return tool_calls showing what context was gathered (for debugging)
+    tool_calls = [
+        {"name": "classify_intent", "input": {"description": description[:100]}},
+        {"name": "get_chart_config", "input": {"chart_type": context["intent"]["suggested_charts"][0]}},
+        {"name": "get_critical_rules", "input": {"chart_type": context["intent"]["suggested_charts"][0]}},
+    ]
 
-            else:
-                # End of conversation - extract code
-                raw_response = ""
-                for block in response.content:
-                    if hasattr(block, "text"):
-                        raw_response += block.text
-
-                code = extract_code(raw_response)
-
-                return {
-                    "code": code,
-                    "raw_response": raw_response,
-                    "tool_calls": all_tool_calls,
-                    "turns": turn + 1,
-                }
-
-        # If we hit max turns, return what we have
-        return {
-            "code": "",
-            "raw_response": "Max turns reached without generating code",
-            "tool_calls": all_tool_calls,
-            "turns": MAX_TURNS,
-        }
+    return {
+        "code": code,
+        "raw_response": raw_response,
+        "tool_calls": tool_calls,
+        "turns": turns,
+    }
 
 
 def generate_visualization(
     description: str,
     data_sample: str,
-    api_key: str | None = None,
+    api_key: str | None = None,  # Kept for backwards compat, ignored
     model: str = "claude-sonnet-4-5-20250929",
     temperature: float = 0.3,
     watermark: str = "none",
@@ -220,20 +260,62 @@ def generate_visualization(
     Generate visualization code using the VizGuide Agent.
 
     This is the main entry point that replaces the old generator.
+    Now uses Claude Agent SDK in keyless mode (api_key parameter ignored).
 
     Args:
         description: User's visualization description
         data_sample: String representation of the data
-        api_key: Anthropic API key (or uses ANTHROPIC_API_KEY env var)
+        api_key: DEPRECATED - Ignored, uses Claude Code CLI auth
         model: Model to use
         temperature: Temperature for generation
         watermark: Watermark type ('none', 'labs', 'qf', 'tie')
 
     Returns:
-        dict with "code", "raw_response", and "tool_calls" keys
+        dict with "code", "raw_response", "tool_calls", and "turns" keys
     """
-    agent = VizGuideAgent(api_key=api_key, model=model, watermark=watermark)
-    return agent.generate(description, data_sample, temperature=temperature)
+    return asyncio.run(
+        generate_visualization_async(
+            description,
+            data_sample,
+            model,
+            temperature,
+            watermark,
+        )
+    )
+
+
+# Keep the old class interface for backwards compatibility
+class VizGuideAgent:
+    """Agent for generating visualizations with progressive context loading.
+
+    DEPRECATED: Use generate_visualization() directly instead.
+    This class is kept for backwards compatibility.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        model: str = "claude-sonnet-4-5-20250929",
+        watermark: str = "none",
+    ):
+        """Initialize the agent (api_key is ignored, uses Claude Code CLI auth)."""
+        self.model = model
+        self.watermark = watermark
+
+    def generate(
+        self,
+        description: str,
+        data_sample: str,
+        temperature: float = 0.3,
+    ) -> dict:
+        """Generate visualization code using agentic workflow."""
+        return generate_visualization(
+            description=description,
+            data_sample=data_sample,
+            model=self.model,
+            temperature=temperature,
+            watermark=self.watermark,
+        )
 
 
 if __name__ == "__main__":
@@ -255,7 +337,7 @@ Columns:
 - BTC_price: float64
 - ETH_price: float64"""
 
-    print("Testing VizGuide Agent...")
+    print("Testing VizGuide Agent (SDK mode)...")
     print(f"Description: {test_description}")
     print(f"Data sample:\n{test_data}\n")
 
@@ -268,4 +350,6 @@ Columns:
         print(f"\nGenerated code preview:\n{result['code'][:500]}...")
     except Exception as e:
         print(f"Error: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)

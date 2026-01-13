@@ -210,11 +210,17 @@ def _generate_time_series(desc: str) -> pd.DataFrame:
     """Generate time series data."""
     np.random.seed(42)
 
-    # Determine time range
-    if "year" in desc:
+    # Determine time range - check plural forms first
+    if "years" in desc:
+        days = 730  # 2 years
+    elif "year" in desc:
         days = 365
+    elif "months" in desc:
+        days = 180  # ~6 months
     elif "month" in desc:
-        days = 30
+        days = 30  # single month
+    elif "weeks" in desc:
+        days = 60  # ~2 months
     elif "week" in desc:
         days = 7
     else:

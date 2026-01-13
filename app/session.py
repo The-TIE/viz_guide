@@ -53,6 +53,23 @@ class GuideSuggestion:
 
 
 @dataclass
+class TemplateSuggestion:
+    """A suggested improvement to a template function."""
+
+    template_id: str  # e.g., "multi_line_chart"
+    template_file: str  # e.g., "line.py"
+    category: str  # "parameter" | "template_code"
+    description: str  # Human-readable description
+    suggested_code: str  # The fix to apply
+    reason: str  # Why this change is needed
+    applied: bool = False  # Whether user applied it
+    # For parameter changes only
+    param_name: str | None = None
+    param_type: str | None = None
+    param_default: str | None = None
+
+
+@dataclass
 class RefinementSession:
     """A complete refinement session from initial generation to approval."""
 
@@ -66,6 +83,10 @@ class RefinementSession:
     approved_at: str | None = None
     capture_path: str | None = None  # Path to saved figure image
     guide_suggestions: list[GuideSuggestion] | None = None
+    # Template tracking (Phase 2.5)
+    used_template: str | None = None  # e.g., "multi_line_chart"
+    template_file: str | None = None  # e.g., "line.py"
+    template_suggestions: list[TemplateSuggestion] | None = None
 
     @classmethod
     def create(
@@ -162,6 +183,24 @@ class RefinementSession:
                     conflicts=conflicts,
                 ))
 
+        # Parse template suggestions (Phase 2.5)
+        template_suggestions = None
+        if data.get("template_suggestions"):
+            template_suggestions = []
+            for ts in data["template_suggestions"]:
+                template_suggestions.append(TemplateSuggestion(
+                    template_id=ts["template_id"],
+                    template_file=ts["template_file"],
+                    category=ts["category"],
+                    description=ts["description"],
+                    suggested_code=ts["suggested_code"],
+                    reason=ts["reason"],
+                    applied=ts.get("applied", False),
+                    param_name=ts.get("param_name"),
+                    param_type=ts.get("param_type"),
+                    param_default=ts.get("param_default"),
+                ))
+
         return cls(
             id=data["id"],
             started_at=data["started_at"],
@@ -173,6 +212,9 @@ class RefinementSession:
             approved_at=data.get("approved_at"),
             capture_path=data.get("capture_path"),
             guide_suggestions=suggestions,
+            used_template=data.get("used_template"),
+            template_file=data.get("template_file"),
+            template_suggestions=template_suggestions,
         )
 
 
@@ -283,6 +325,49 @@ class SessionManager:
             return False
         if 0 <= suggestion_index < len(session.guide_suggestions):
             session.guide_suggestions[suggestion_index].applied = True
+            self.save_session(session)
+            return True
+        return False
+
+    def set_template_info(
+        self,
+        session_id: str,
+        template_id: str,
+        template_file: str,
+    ) -> bool:
+        """Set template info for a session (Phase 2.5)."""
+        session = self.load_session(session_id)
+        if not session:
+            return False
+        session.used_template = template_id
+        session.template_file = template_file
+        self.save_session(session)
+        return True
+
+    def set_template_suggestions(
+        self,
+        session_id: str,
+        suggestions: list[TemplateSuggestion],
+    ) -> bool:
+        """Set template suggestions for a session (Phase 2.5)."""
+        session = self.load_session(session_id)
+        if not session:
+            return False
+        session.template_suggestions = suggestions
+        self.save_session(session)
+        return True
+
+    def mark_template_suggestion_applied(
+        self,
+        session_id: str,
+        suggestion_index: int,
+    ) -> bool:
+        """Mark a template suggestion as applied (Phase 2.5)."""
+        session = self.load_session(session_id)
+        if not session or not session.template_suggestions:
+            return False
+        if 0 <= suggestion_index < len(session.template_suggestions):
+            session.template_suggestions[suggestion_index].applied = True
             self.save_session(session)
             return True
         return False

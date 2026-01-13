@@ -1,10 +1,16 @@
-"""Claude API integration for visualization code generation."""
+"""Legacy generator for visualization code generation using Claude Agent SDK.
 
-import os
+This is the "legacy mode" generator that loads the entire guide into context
+rather than using progressive disclosure via tools. It's kept for comparison
+purposes and as a fallback.
+"""
+
 import re
 from pathlib import Path
 
-import anthropic
+import asyncio
+
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 
 GUIDE_DIR = Path(__file__).parent.parent / "guide"
@@ -109,32 +115,26 @@ def extract_code(response_text: str) -> str:
     return response_text
 
 
-def generate_visualization(
+async def generate_visualization_async(
     description: str,
     data_sample: str,
-    api_key: str | None = None,
     model: str = "claude-sonnet-4-5-20250929",
     temperature: float = 0.3,
 ) -> dict:
     """
-    Generate visualization code using Claude API.
+    Generate visualization code using Claude Agent SDK (keyless mode).
+
+    This is the legacy generator that loads the entire guide into context.
 
     Args:
         description: User's visualization description
         data_sample: String representation of the data
-        api_key: Anthropic API key (or uses ANTHROPIC_API_KEY env var)
         model: Model to use
         temperature: Temperature for generation
 
     Returns:
         dict with "code" and "raw_response" keys
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("API key required. Set ANTHROPIC_API_KEY or pass api_key parameter.")
-
-    client = anthropic.Anthropic(api_key=api_key)
-
     # Load guide context
     guide_context = load_guide_context()
 
@@ -160,19 +160,56 @@ Generate the complete Python code to create this visualization. The code should:
 4. If the data doesn't have the columns needed for the requested visualization, adapt the visualization to what's possible with the available data
 """
 
-    # Call API
-    response = client.messages.create(
+    options = ClaudeAgentOptions(
+        system_prompt=system,
+        max_turns=1,  # Single response, no tool calls
         model=model,
-        max_tokens=4096,
-        temperature=temperature,
-        system=system,
-        messages=[{"role": "user", "content": user_message}],
+        cwd=str(Path(__file__).parent.parent),
     )
 
-    raw_response = response.content[0].text
+    raw_response = ""
+
+    async for message in query(prompt=user_message, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    raw_response += block.text
+
     code = extract_code(raw_response)
 
     return {
         "code": code,
         "raw_response": raw_response,
     }
+
+
+def generate_visualization(
+    description: str,
+    data_sample: str,
+    api_key: str | None = None,  # Kept for backwards compat, ignored
+    model: str = "claude-sonnet-4-5-20250929",
+    temperature: float = 0.3,
+) -> dict:
+    """
+    Generate visualization code using Claude API (legacy mode).
+
+    Now uses Claude Agent SDK in keyless mode (api_key parameter ignored).
+
+    Args:
+        description: User's visualization description
+        data_sample: String representation of the data
+        api_key: DEPRECATED - Ignored, uses Claude Code CLI auth
+        model: Model to use
+        temperature: Temperature for generation
+
+    Returns:
+        dict with "code" and "raw_response" keys
+    """
+    return asyncio.run(
+        generate_visualization_async(
+            description,
+            data_sample,
+            model,
+            temperature,
+        )
+    )

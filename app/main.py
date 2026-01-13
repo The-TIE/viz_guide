@@ -18,6 +18,8 @@ from session import get_session_manager, RefinementSession
 from refine import refine_visualization
 from suggest import analyze_session, apply_suggestion, validate_improvement
 from guide_index import reload_guide_index
+from template_feedback import detect_template_usage, apply_template_suggestion
+import templates  # For exec() context
 
 # Load .env file from project root
 load_dotenv(Path(__file__).parent.parent / ".env")
@@ -56,13 +58,7 @@ st.markdown("*Test the Plotly visualization guide by generating charts from desc
 with st.sidebar:
     st.header("⚙️ Configuration")
 
-    # API Key
-    api_key = st.text_input(
-        "Anthropic API Key",
-        type="password",
-        value=os.environ.get("ANTHROPIC_API_KEY", ""),
-        help="Your Anthropic API key. Can also be set via ANTHROPIC_API_KEY env var."
-    )
+    # Note: API key no longer needed - uses Claude Code CLI auth (keyless mode)
 
     # Model selection
     model = st.selectbox(
@@ -158,7 +154,7 @@ with col1:
     # Random prompt button
     if st.button("🎲 Random Prompt", help="Generate a random visualization description", use_container_width=True):
         with st.spinner("Generating prompt..."):
-            st.session_state["description"] = get_random_prompt(api_key=api_key)
+            st.session_state["description"] = get_random_prompt()
         st.rerun()
 
     # Data input section
@@ -189,7 +185,7 @@ with col1:
     else:  # Generate Sample
         if st.button("🔄 Generate Data for Current Description", help="Generate synthetic data based on description above"):
             with st.spinner("Generating sample data..."):
-                df = generate_sample_data(description, api_key=api_key)
+                df = generate_sample_data(description)
                 st.session_state["generated_df"] = df
 
         if "generated_df" in st.session_state:
@@ -201,8 +197,7 @@ with col1:
             st.dataframe(df.head(10), use_container_width=True)
             st.caption(f"Shape: {df.shape[0]} rows × {df.shape[1]} columns")
 
-    if not api_key:
-        st.warning("Please enter your API key in the sidebar or add to .env file")
+    # Note: Uses Claude Code CLI auth (keyless mode) - no API key needed
 
 with col2:
     st.header("📊 Output")
@@ -212,11 +207,11 @@ with col2:
         "✨ Generate Visualization",
         type="primary",
         use_container_width=True,
-        disabled=df is None or not api_key
+        disabled=df is None
     )
 
     # Process generation
-    if generate_clicked and df is not None and api_key:
+    if generate_clicked and df is not None:
         spinner_text = "Generating visualization (agent mode)..." if use_agent else "Generating visualization..."
         with st.spinner(spinner_text):
             try:
@@ -235,26 +230,31 @@ with col2:
                     result = generate_agent(
                         description=description,
                         data_sample=data_sample,
-                        api_key=api_key,
                         model=model,
                         temperature=temperature,
                         watermark=watermark,
                     )
                     st.session_state["tool_calls"] = result.get("tool_calls", [])
                     st.session_state["agent_turns"] = result.get("turns", 0)
+                    st.session_state["raw_response"] = result.get("raw_response", "")
                 else:
                     result = generate_legacy(
                         description=description,
                         data_sample=data_sample,
-                        api_key=api_key,
                         model=model,
                         temperature=temperature,
                     )
                     st.session_state["tool_calls"] = []
                     st.session_state["agent_turns"] = 0
+                    st.session_state["raw_response"] = ""
 
                 # Add first iteration to session
                 session_manager.add_iteration(session.id, result["code"])
+
+                # Detect template usage (Phase 2.5)
+                template_id, template_file = detect_template_usage(result["code"])
+                if template_id:
+                    session_manager.set_template_info(session.id, template_id, template_file)
 
                 st.session_state["generated_code"] = result["code"]
                 st.session_state["generation_success"] = True
@@ -299,6 +299,9 @@ with col2:
                 # Remove fig.show() calls that would open new browser tabs
                 code_cleaned = re.sub(r'fig\.show\([^)]*\)', '# fig.show() removed', code)
 
+                # Fix template imports for exec context (app.templates -> templates)
+                code_cleaned = re.sub(r'from app\.templates', 'from templates', code_cleaned)
+
                 # Execute the code
                 exec(code_cleaned, exec_globals)
 
@@ -331,6 +334,12 @@ with col2:
                     st.markdown(f"**{i}. {tc['name']}**")
                     st.json(tc["input"])
 
+        # Raw response display (for debugging template decisions)
+        raw_response = st.session_state.get("raw_response")
+        if raw_response:
+            with st.expander("🔍 Agent Raw Response", expanded=False):
+                st.text(raw_response[:3000] + ("..." if len(raw_response) > 3000 else ""))
+
 # Refinement section
 st.divider()
 st.header("🔄 Refinement")
@@ -357,6 +366,10 @@ if session_id and st.session_state.get("generated_code"):
         # Check if session is approved
         if current_session.status == "approved":
             st.success("✅ Visualization approved!")
+
+            # Show template info if used (Phase 2.5)
+            if current_session.used_template:
+                st.info(f"🧩 Template used: `{current_session.used_template}` from `{current_session.template_file}`")
 
             # Show guide suggestions if available
             if current_session.guide_suggestions:
@@ -466,23 +479,71 @@ if session_id and st.session_state.get("generated_code"):
                         with st.spinner("Re-running with updated guide..."):
                             validation = validate_improvement(
                                 current_session,
-                                api_key=api_key,
                                 model=model,
                                 watermark=watermark,
                             )
                             st.session_state["validation_result"] = validation
                             st.rerun()
 
-            elif len(current_session.iterations) > 1:
-                # Generate suggestions if not already done
-                if st.button("🔍 Analyze for Guide Improvements", use_container_width=True):
-                    with st.spinner("Analyzing session for improvements..."):
-                        suggestions = analyze_session(current_session, api_key=api_key)
-                        if suggestions:
-                            session_manager.set_suggestions(session_id, suggestions)
-                            st.rerun()
-                        else:
-                            st.info("No guide improvements suggested for this session.")
+            # Show template suggestions if available (Phase 2.5)
+            if current_session.template_suggestions:
+                st.subheader("🔧 Suggested Template Improvements")
+
+                # Count applied vs pending
+                applied_count = sum(1 for s in current_session.template_suggestions if s.applied)
+                pending_count = len(current_session.template_suggestions) - applied_count
+                if applied_count > 0:
+                    st.caption(f"✅ {applied_count} applied, {pending_count} pending")
+
+                for i, suggestion in enumerate(current_session.template_suggestions):
+                    if suggestion.applied:
+                        st.checkbox(
+                            f"✅ **{suggestion.template_id}** - {suggestion.description}",
+                            value=True,
+                            disabled=True,
+                            key=f"template_suggestion_{session_id}_{i}",
+                        )
+                    else:
+                        st.markdown(f"**{suggestion.template_id}** - {suggestion.description}")
+
+                    st.caption(f"_Category: {suggestion.category} | {suggestion.reason}_")
+
+                    with st.expander("View suggestion"):
+                        st.code(suggestion.suggested_code, language="python")
+
+                        if not suggestion.applied:
+                            col_apply, col_skip = st.columns(2)
+                            with col_apply:
+                                if st.button("Apply to Template", key=f"apply_template_{session_id}_{i}", use_container_width=True):
+                                    success, message = apply_template_suggestion(suggestion)
+                                    if success:
+                                        session_manager.mark_template_suggestion_applied(session_id, i)
+                                        st.success(message)
+                                    else:
+                                        st.warning(message)
+                                    st.rerun()
+                            with col_skip:
+                                if st.button("Keep as One-Off", key=f"skip_template_{session_id}_{i}", use_container_width=True):
+                                    # Mark as applied without actually applying
+                                    session_manager.mark_template_suggestion_applied(session_id, i)
+                                    st.info("Change kept as one-off, not applied to template")
+                                    st.rerun()
+
+            # Show Analyze button if no suggestions have been generated yet
+            if not current_session.guide_suggestions and not current_session.template_suggestions:
+                if len(current_session.iterations) > 1:
+                    # Generate suggestions if not already done
+                    if st.button("🔍 Analyze for Improvements", use_container_width=True):
+                        with st.spinner("Analyzing session for improvements..."):
+                            guide_suggestions, template_suggestions = analyze_session(current_session)
+                            if guide_suggestions:
+                                session_manager.set_suggestions(session_id, guide_suggestions)
+                            if template_suggestions:
+                                session_manager.set_template_suggestions(session_id, template_suggestions)
+                            if guide_suggestions or template_suggestions:
+                                st.rerun()
+                            else:
+                                st.info("No improvements suggested for this session.")
 
             # Show validation result if available
             if st.session_state.get("validation_result"):
@@ -522,7 +583,6 @@ if session_id and st.session_state.get("generated_code"):
                             result = refine_visualization(
                                 session=current_session,
                                 feedback=feedback_input,
-                                api_key=api_key,
                                 model=model,
                             )
 
@@ -556,6 +616,7 @@ if session_id and st.session_state.get("generated_code"):
                                 "math": __import__("math"),
                             }
                             code_cleaned = re.sub(r'fig\.show\([^)]*\)', '', code)
+                            code_cleaned = re.sub(r'from app\.templates', 'from templates', code_cleaned)
                             exec(code_cleaned, exec_globals)
                             if "fig" in exec_globals:
                                 # Use resolve() to ensure absolute path

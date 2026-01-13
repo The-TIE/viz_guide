@@ -1,18 +1,21 @@
-"""Guide suggestion and improvement module."""
+"""Guide suggestion and improvement module using Claude Agent SDK."""
 
 import json
-import os
 import re
 from pathlib import Path
 
-import anthropic
+import asyncio
+
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 try:
-    from session import ConflictFix, GuideSuggestion, RefinementSession
+    from session import ConflictFix, GuideSuggestion, RefinementSession, TemplateSuggestion
     from agent import generate_visualization
+    from template_feedback import analyze_template_feedback as analyze_template
 except ImportError:
-    from .session import ConflictFix, GuideSuggestion, RefinementSession
+    from .session import ConflictFix, GuideSuggestion, RefinementSession, TemplateSuggestion
     from .agent import generate_visualization
+    from .template_feedback import analyze_template_feedback as analyze_template
 
 
 GUIDE_DIR = Path(__file__).parent.parent / "guide"
@@ -102,34 +105,26 @@ Return an empty array [] if no guide improvements are needed.
 """
 
 
-def analyze_session(
+async def analyze_session_async(
     session: RefinementSession,
-    api_key: str | None = None,
     model: str = "claude-sonnet-4-5-20250929",
 ) -> list[GuideSuggestion]:
     """
-    Analyze a completed session to suggest guide improvements.
+    Analyze a completed session to suggest guide improvements using Claude Agent SDK.
 
     Args:
         session: The approved refinement session
-        api_key: Anthropic API key
         model: Model to use
 
     Returns:
         List of GuideSuggestion objects
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("API key required.")
-
     if session.status != "approved":
         return []
 
     if len(session.iterations) < 2:
         # No refinements were needed
         return []
-
-    client = anthropic.Anthropic(api_key=api_key)
 
     # Build iteration history with feedback
     iteration_history = []
@@ -150,18 +145,22 @@ def analyze_session(
         final_code=final_code,
     )
 
-    response = client.messages.create(
+    options = ClaudeAgentOptions(
+        max_turns=1,
         model=model,
-        max_tokens=2048,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}],
+        cwd=str(Path(__file__).parent.parent),
     )
 
-    # Parse response
-    response_text = response.content[0].text
+    raw_response = ""
+
+    async for message in query(prompt=prompt, options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    raw_response += block.text
 
     # Extract JSON from response
-    json_match = re.search(r"\[.*\]", response_text, re.DOTALL)
+    json_match = re.search(r"\[.*\]", raw_response, re.DOTALL)
     if not json_match:
         return []
 
@@ -198,6 +197,44 @@ def analyze_session(
             )
 
     return suggestions
+
+
+def analyze_session(
+    session: RefinementSession,
+    api_key: str | None = None,  # Kept for backwards compat, ignored
+    model: str = "claude-sonnet-4-5-20250929",
+) -> tuple[list[GuideSuggestion], list[TemplateSuggestion]]:
+    """
+    Analyze a completed session to suggest guide and template improvements.
+
+    Now uses Claude Agent SDK in keyless mode (api_key parameter ignored).
+
+    Args:
+        session: The approved refinement session
+        api_key: DEPRECATED - Ignored, uses Claude Code CLI auth
+        model: Model to use
+
+    Returns:
+        Tuple of (guide_suggestions, template_suggestions)
+    """
+    # Get guide suggestions (existing flow)
+    guide_suggestions = asyncio.run(
+        analyze_session_async(
+            session,
+            model,
+        )
+    )
+
+    # Get template suggestions if a template was used (Phase 2.5)
+    template_suggestions = []
+    if session.used_template:
+        try:
+            template_suggestions = analyze_template(session, model)
+        except Exception as e:
+            # Don't fail the whole analysis if template analysis fails
+            print(f"Template analysis failed: {e}")
+
+    return guide_suggestions, template_suggestions
 
 
 def apply_suggestion(suggestion: GuideSuggestion) -> tuple[bool, str]:
@@ -278,31 +315,28 @@ def apply_suggestion(suggestion: GuideSuggestion) -> tuple[bool, str]:
 
 def validate_improvement(
     session: RefinementSession,
-    api_key: str | None = None,
+    api_key: str | None = None,  # Kept for backwards compat, ignored
     model: str = "claude-sonnet-4-5-20250929",
     watermark: str = "none",
 ) -> dict:
     """
     Re-run the original task with the current guide to verify improvements.
 
+    Now uses Claude Agent SDK in keyless mode (api_key parameter ignored).
+
     Args:
         session: The original session to validate
-        api_key: Anthropic API key
+        api_key: DEPRECATED - Ignored, uses Claude Code CLI auth
         model: Model to use
         watermark: Watermark setting
 
     Returns:
         dict with "code", "success", and "comparison" keys
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("API key required.")
-
-    # Generate new visualization with current guide
+    # Generate new visualization with current guide (agent.py handles keyless)
     result = generate_visualization(
         description=session.description,
         data_sample=session.data_sample,
-        api_key=api_key,
         model=model,
         watermark=watermark,
     )
@@ -312,7 +346,6 @@ def validate_improvement(
     final_code = session.get_current_code() or ""
 
     # Simple comparison: check if known issues are addressed
-    # This could be enhanced with more sophisticated comparison
     comparison = {
         "original_code_length": len(original_code),
         "final_code_length": len(final_code),
@@ -391,7 +424,7 @@ if __name__ == "__main__":
         approved_at="2024-01-01T00:03:00",
     )
 
-    print("Testing guide suggestion analysis...")
+    print("Testing guide suggestion analysis (SDK mode)...")
     print(f"Session: {session.id}")
     print(f"Iterations: {len(session.iterations)}")
 
@@ -399,7 +432,7 @@ if __name__ == "__main__":
     patterns = get_feedback_patterns([session])
     print(f"\nFeedback patterns: {patterns}")
 
-    # Test suggestion analysis (needs API)
+    # Test suggestion analysis (uses SDK)
     try:
         suggestions = analyze_session(session)
         print(f"\nSuggestions generated: {len(suggestions)}")
@@ -408,4 +441,4 @@ if __name__ == "__main__":
             print(f"    Content: {s.content[:80]}...")
             print(f"    Reason: {s.reason}")
     except Exception as e:
-        print(f"Suggestion analysis skipped (needs API): {e}")
+        print(f"Suggestion analysis failed: {e}")

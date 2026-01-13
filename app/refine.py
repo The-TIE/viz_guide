@@ -1,16 +1,31 @@
-"""Refinement agent for iterative visualization improvements."""
+"""Refinement agent for iterative visualization improvements using Claude Agent SDK.
 
-import os
+Note: MCP tool integration in the SDK is currently broken, so we use a
+simplified approach that includes relevant guide context directly in the prompt.
+"""
+
 import re
+from pathlib import Path
 
-import anthropic
+import asyncio
+
+from claude_agent_sdk import (
+    query,
+    ClaudeAgentOptions,
+    AssistantMessage,
+    TextBlock,
+)
 
 try:
-    from agent_tools import TOOL_DEFINITIONS, execute_tool
+    from agent_tools import search_guide, get_critical_rules
     from session import RefinementSession
 except ImportError:
-    from .agent_tools import TOOL_DEFINITIONS, execute_tool
+    from .agent_tools import search_guide, get_critical_rules
     from .session import RefinementSession
+
+
+# Maximum number of turns
+MAX_TURNS = 1  # Single turn since we're not using tools
 
 
 def extract_code(response_text: str) -> str:
@@ -38,7 +53,74 @@ def extract_code(response_text: str) -> str:
     return response_text
 
 
-REFINEMENT_SYSTEM_PROMPT = """You are a Plotly visualization expert making TARGETED FIXES to an existing chart.
+def _gather_refinement_context(feedback: str) -> dict:
+    """Pre-gather relevant context for refinement based on feedback.
+
+    Returns dict with search results and critical rules.
+    """
+    # Keywords to detect chart type from feedback/code
+    feedback_lower = feedback.lower()
+
+    # Determine likely chart type from feedback keywords
+    chart_type = "line"  # Default
+    if "bar" in feedback_lower:
+        chart_type = "bar"
+    elif "scatter" in feedback_lower:
+        chart_type = "scatter"
+    elif "heatmap" in feedback_lower:
+        chart_type = "heatmap"
+    elif "donut" in feedback_lower or "pie" in feedback_lower:
+        chart_type = "donut"
+
+    # Get critical rules for the chart type
+    critical = get_critical_rules(chart_type)
+
+    # Search for relevant guide sections based on feedback keywords
+    search_queries = []
+
+    if "hover" in feedback_lower:
+        search_queries.append("hover template formatting")
+    if "legend" in feedback_lower:
+        search_queries.append("legend positioning placement")
+    if "color" in feedback_lower or "theme" in feedback_lower:
+        search_queries.append("dark theme colors colorway")
+    if "format" in feedback_lower or "billion" in feedback_lower or "million" in feedback_lower:
+        search_queries.append("format billions format_with_B")
+    if "axis" in feedback_lower or "label" in feedback_lower:
+        search_queries.append("axis formatting labels")
+    if "title" in feedback_lower or "subtitle" in feedback_lower:
+        search_queries.append("title subtitle formatting")
+    if "grid" in feedback_lower:
+        search_queries.append("grid lines configuration")
+    if "margin" in feedback_lower:
+        search_queries.append("layout margins spacing")
+
+    # If no specific keywords, do a general search based on the feedback
+    if not search_queries:
+        search_queries.append(feedback[:100])
+
+    search_results = []
+    for q in search_queries[:3]:  # Limit to 3 searches
+        result = search_guide(q, limit=3)
+        if result and "No results" not in result:
+            search_results.append(result)
+
+    return {
+        "chart_type": chart_type,
+        "critical_rules": critical,
+        "search_results": search_results,
+    }
+
+
+def _build_refinement_system_prompt(context: dict) -> str:
+    """Build the system prompt with gathered context."""
+
+    # Format search results
+    search_section = ""
+    if context["search_results"]:
+        search_section = "\n## Guide References\n" + "\n---\n".join(context["search_results"][:2])
+
+    return f"""You are a Plotly visualization expert making TARGETED FIXES to an existing chart.
 
 ## Theme Rules (ALWAYS APPLY)
 - plot_bgcolor: #0e1729
@@ -71,38 +153,34 @@ Your job is to make SURGICAL CHANGES to address the new feedback while keeping e
 - Removing watermark code
 - Changing from format_with_B back to tickformat
 
+{context['critical_rules']}
+
+{search_section}
+
 ## Output Format
 Return ONLY Python code wrapped in ```python``` markers.
 The code MUST be the current code with targeted modifications - NOT a rewrite.
 """
 
 
-def refine_visualization(
+async def refine_visualization_async(
     session: RefinementSession,
     feedback: str,
-    api_key: str | None = None,
     model: str = "claude-sonnet-4-5-20250929",
     temperature: float = 0.3,
 ) -> dict:
     """
-    Refine a visualization based on user feedback.
+    Refine a visualization based on user feedback using Claude Agent SDK.
 
     Args:
         session: The current refinement session with iteration history
         feedback: User's feedback on what to fix
-        api_key: Anthropic API key (or uses env var)
         model: Model to use
         temperature: Temperature for generation
 
     Returns:
-        dict with "code", "raw_response", and "tool_calls" keys
+        dict with "code", "raw_response", "tool_calls", and "turns" keys
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise ValueError("API key required.")
-
-    client = anthropic.Anthropic(api_key=api_key)
-
     # Get current code
     current_code = session.get_current_code()
     if not current_code:
@@ -110,6 +188,9 @@ def refine_visualization(
 
     # Build iteration history context
     iteration_history = session.get_iteration_history()
+
+    # Pre-gather context using tool functions directly
+    context = _gather_refinement_context(feedback)
 
     # Build user message
     user_message = f"""Refine this Plotly visualization based on user feedback.
@@ -131,67 +212,72 @@ USER FEEDBACK:
 PREVIOUS ITERATIONS:
 {iteration_history}
 
-Please fix the issue described in the feedback. Search the guide if you need specific formatting or styling guidance. Return the complete updated code."""
+Please fix the issue described in the feedback. Return the complete updated code."""
 
-    # Use the focused refinement prompt (no need for full core_rules which has generation workflow)
-    system_prompt = REFINEMENT_SYSTEM_PROMPT
+    options = ClaudeAgentOptions(
+        system_prompt=_build_refinement_system_prompt(context),
+        max_turns=MAX_TURNS,
+        model=model,
+        cwd=str(Path(__file__).parent.parent),
+    )
 
-    messages = [{"role": "user", "content": user_message}]
-    all_tool_calls = []
-    max_turns = 5
+    raw_response = ""
+    turns = 0
 
-    # Agent loop
-    for turn in range(max_turns):
-        response = client.messages.create(
-            model=model,
-            max_tokens=4096,
-            temperature=temperature,
-            system=system_prompt,
-            tools=TOOL_DEFINITIONS,
-            messages=messages,
-        )
-
-        # Handle tool calls
-        if response.stop_reason == "tool_use":
-            tool_results = []
-            for block in response.content:
-                if block.type == "tool_use":
-                    all_tool_calls.append({
-                        "name": block.name,
-                        "input": block.input,
-                    })
-                    result = execute_tool(block.name, block.input)
-                    tool_results.append({
-                        "type": "tool_result",
-                        "tool_use_id": block.id,
-                        "content": result,
-                    })
-
-            messages.append({"role": "assistant", "content": response.content})
-            messages.append({"role": "user", "content": tool_results})
-        else:
-            # Extract code from response
-            raw_response = ""
-            for block in response.content:
-                if hasattr(block, "text"):
+    async for message in query(prompt=user_message, options=options):
+        if isinstance(message, AssistantMessage):
+            turns += 1
+            for block in message.content:
+                if isinstance(block, TextBlock):
                     raw_response += block.text
 
-            code = extract_code(raw_response)
+    code = extract_code(raw_response)
 
-            return {
-                "code": code,
-                "raw_response": raw_response,
-                "tool_calls": all_tool_calls,
-                "turns": turn + 1,
-            }
+    # Return tool_calls showing what context was gathered (for debugging)
+    tool_calls = [
+        {"name": "get_critical_rules", "input": {"chart_type": context["chart_type"]}},
+    ]
+    for i, q in enumerate(context["search_results"][:2]):
+        tool_calls.append({"name": "search_guide", "input": {"query": f"(context search {i+1})"}})
 
-    # Max turns reached
     return {
-        "code": "",
-        "raw_response": "Max turns reached without generating code",
-        "tool_calls": all_tool_calls,
-        "turns": max_turns,
+        "code": code,
+        "raw_response": raw_response,
+        "tool_calls": tool_calls,
+        "turns": turns,
     }
+
+
+def refine_visualization(
+    session: RefinementSession,
+    feedback: str,
+    api_key: str | None = None,  # Kept for backwards compat, ignored
+    model: str = "claude-sonnet-4-5-20250929",
+    temperature: float = 0.3,
+) -> dict:
+    """
+    Refine a visualization based on user feedback.
+
+    Now uses Claude Agent SDK in keyless mode (api_key parameter ignored).
+
+    Args:
+        session: The current refinement session with iteration history
+        feedback: User's feedback on what to fix
+        api_key: DEPRECATED - Ignored, uses Claude Code CLI auth
+        model: Model to use
+        temperature: Temperature for generation
+
+    Returns:
+        dict with "code", "raw_response", "tool_calls", and "turns" keys
+    """
+    return asyncio.run(
+        refine_visualization_async(
+            session,
+            feedback,
+            model,
+            temperature,
+        )
+    )
 
 
 if __name__ == "__main__":
@@ -228,7 +314,7 @@ fig.update_layout(
 """
     )
 
-    print("Testing refinement agent...")
+    print("Testing refinement agent (SDK mode)...")
     print(f"Session ID: {session.id}")
     print(f"Current iteration: {len(session.iterations)}")
 
