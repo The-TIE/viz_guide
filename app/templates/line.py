@@ -32,7 +32,7 @@ def line_chart(
     title: str,
     subtitle: Optional[str] = None,
     y_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a single line chart for time series trends.
@@ -44,7 +44,7 @@ def line_chart(
         title: Chart title
         subtitle: Optional subtitle below title
         y_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -90,8 +90,7 @@ def line_chart(
     configure_hover(fig, mode="x unified")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
@@ -106,7 +105,7 @@ def multi_line_chart(
     normalize: bool | str = False,
     colors: Optional[list[str]] = None,
     y_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a multi-line chart for comparing 2-5 series.
@@ -123,7 +122,7 @@ def multi_line_chart(
             - 'returns': Percentage returns from 0% at start
         colors: Optional list of hex colors for each series (e.g., ['#F7931A', '#627EEA'])
         y_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -223,8 +222,7 @@ def multi_line_chart(
     configure_hover(fig, mode="x unified")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
@@ -237,7 +235,7 @@ def small_multiples_chart(
     title: str,
     cols: int = 2,
     y_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a small multiples chart (subplot grid) for 6+ series.
@@ -249,7 +247,7 @@ def small_multiples_chart(
         title: Main chart title
         cols: Number of columns in subplot grid (default 2)
         y_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -318,8 +316,7 @@ def small_multiples_chart(
     fig.update_yaxes(**y_config)
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig

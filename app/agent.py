@@ -133,16 +133,19 @@ fig = multi_line_chart(
     x_column='date',
     y_columns=['BTC_price', 'ETH_price'],  # Use raw price columns, template calculates returns
     title='BTC vs ETH Cumulative Returns',
-    normalize='returns'  # This converts to % returns from 0% automatically
+    normalize='returns',  # This converts to % returns from 0% automatically
+    source='CoinGecko'  # ALWAYS include source attribution
 )
 # That's it! No manual calculation needed. Template adds reference line at 0%, proper axis labels, etc.
 
 # Single series
-fig = line_chart(df, x_column='date', y_column='price', title='Title')
+fig = line_chart(df, x_column='date', y_column='price', title='Title', source='Data Provider')
 
 # Rankings
-fig = horizontal_bar_chart(df, category_column='name', value_column='volume', title='Title', sort=True)
+fig = horizontal_bar_chart(df, category_column='name', value_column='volume', title='Title', sort=True, source='CoinGecko')
 ```
+
+**ALWAYS pass `source` parameter** - every chart needs attribution (e.g., 'CoinGecko', 'DeFiLlama', 'Glassnode').
 
 ### When to Use Custom Code (ONLY these cases):
 - Specialized chart type not in templates (candlestick, heatmap, sankey, etc.)

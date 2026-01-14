@@ -33,7 +33,7 @@ def bar_chart(
     subtitle: Optional[str] = None,
     sort: bool = False,
     y_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a vertical bar chart.
@@ -46,7 +46,7 @@ def bar_chart(
         subtitle: Optional subtitle below title
         sort: If True, sort bars by value (descending)
         y_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -118,8 +118,7 @@ def bar_chart(
     configure_hover(fig, mode="closest")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
@@ -133,7 +132,7 @@ def horizontal_bar_chart(
     subtitle: Optional[str] = None,
     sort: bool = True,
     value_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a horizontal bar chart for rankings and long labels.
@@ -146,7 +145,7 @@ def horizontal_bar_chart(
         subtitle: Optional subtitle below title
         sort: If True (default), sort bars by value (largest at top)
         value_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -204,8 +203,7 @@ def horizontal_bar_chart(
     configure_hover(fig, mode="closest")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
@@ -219,7 +217,7 @@ def stacked_bar_chart(
     subtitle: Optional[str] = None,
     horizontal: bool = False,
     value_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a stacked bar chart for composition.
@@ -232,7 +230,7 @@ def stacked_bar_chart(
         subtitle: Optional subtitle below title
         horizontal: If True, create horizontal stacked bars
         value_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -302,8 +300,7 @@ def stacked_bar_chart(
     configure_hover(fig, mode="closest")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
@@ -316,7 +313,7 @@ def grouped_bar_chart(
     title: str,
     subtitle: Optional[str] = None,
     value_format: str = "number",
-    source: Optional[str] = None,
+    source: str = "The Tie",
     watermark: str = "tie",
 ) -> go.Figure:
     """Create a grouped bar chart for comparing 2-3 measures.
@@ -328,7 +325,7 @@ def grouped_bar_chart(
         title: Chart title
         subtitle: Optional subtitle below title
         value_format: Value format ('number', 'currency', 'percent')
-        source: Optional source attribution
+        source: Source attribution (default: "The Tie")
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
     Returns:
@@ -402,8 +399,7 @@ def grouped_bar_chart(
     configure_hover(fig, mode="closest")
 
     # Add annotations
-    if source:
-        add_source_annotation(fig, source)
+    add_source_annotation(fig, source)
     add_updated_annotation(fig)
 
     return fig
