@@ -8,11 +8,20 @@ import plotly.graph_objects as go
 from .base import (
     colorway,
     get_template_tie,
-    format_with_B,
     add_source_annotation,
     add_updated_annotation,
     configure_hover,
-    get_y_tickformat,
+    get_base_font,
+    get_title_config,
+    get_axis_config,
+    get_legend_config,
+    get_margin_config,
+    build_subtitle,
+    MARGIN_LEFT_HBAR,
+    # New formatting functions
+    get_tick_config,
+    get_bar_labels,
+    format_hover_value,
 )
 
 
@@ -48,38 +57,60 @@ def bar_chart(
     if sort:
         plot_df = plot_df.sort_values(y_column, ascending=False)
 
+    # Pre-format hover values (always needed)
+    hover_labels = [format_hover_value(v, y_format) for v in plot_df[y_column]]
+
+    # Only add bar labels if ≤12 bars (per guide/07_text.md)
+    n_bars = len(plot_df)
+    if n_bars <= 12:
+        bar_labels = get_bar_labels(plot_df[y_column], y_format)
+        # Position inside by default, outside only for short bars
+        max_val = plot_df[y_column].max()
+        threshold = max_val * 0.15  # Bars < 15% of max get outside labels
+        text_positions = [
+            "inside" if v > threshold else "outside"
+            for v in plot_df[y_column]
+        ]
+    else:
+        bar_labels = None
+        text_positions = None
+
     fig = go.Figure()
 
-    fig.add_trace(
-        go.Bar(
-            x=plot_df[x_column],
-            y=plot_df[y_column],
-            marker=dict(color=colorway[0]),
-            hovertemplate="%{x}: %{y:,.2f}<extra></extra>",
-        )
+    trace_kwargs = dict(
+        x=plot_df[x_column],
+        y=plot_df[y_column],
+        marker=dict(color=colorway[0]),
+        customdata=hover_labels,
+        hovertemplate="%{x}: %{customdata}<extra></extra>",
     )
+    if bar_labels is not None:
+        trace_kwargs.update(
+            text=bar_labels,
+            textposition=text_positions,
+            textfont=dict(color="white"),
+            insidetextanchor="end",
+            cliponaxis=False,
+        )
 
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
+    fig.add_trace(go.Bar(**trace_kwargs))
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
     if watermark == "none":
         template.layout.images = []  # Remove watermark but keep all styling
 
+    # Get formatted tick configuration (include_zero for bar charts)
+    y_tick_config = get_tick_config(plot_df[y_column], y_format, include_zero=True)
+
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
-        xaxis=dict(showgrid=False),
-        yaxis=dict(
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.1)",
-            tickformat=get_y_tickformat(y_format),
-        ),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
+        xaxis=get_axis_config(),
+        yaxis=get_axis_config(extra=y_tick_config),
         bargap=0.2,
-        margin=dict(l=60, r=30, t=80, b=80),
+        margin=get_margin_config(),
         showlegend=False,
     )
 
@@ -126,10 +157,11 @@ def horizontal_bar_chart(
     if sort:
         plot_df = plot_df.sort_values(value_column, ascending=True)
 
-    fig = go.Figure()
+    # Pre-format labels and hover values
+    bar_labels = get_bar_labels(plot_df[value_column], value_format)
+    hover_labels = [format_hover_value(v, value_format) for v in plot_df[value_column]]
 
-    # Determine if we need text inside or outside bars
-    max_val = plot_df[value_column].max()
+    fig = go.Figure()
 
     fig.add_trace(
         go.Bar(
@@ -137,38 +169,34 @@ def horizontal_bar_chart(
             x=plot_df[value_column],
             orientation="h",
             marker=dict(color=colorway[0]),
-            text=plot_df[value_column].apply(lambda x: format_with_B(x, prefix="", decimals=1)),
+            text=bar_labels,
             textposition="inside",
             insidetextanchor="end",
             textfont=dict(color="white"),
-            hovertemplate="%{y}: %{x:,.2f}<extra></extra>",
+            customdata=hover_labels,
+            hovertemplate="%{y}: %{customdata}<extra></extra>",
         )
     )
-
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
     if watermark == "none":
         template.layout.images = []  # Remove watermark but keep all styling
 
+    # Get formatted tick configuration for x-axis (values, include_zero for bar charts)
+    x_tick_config = get_tick_config(plot_df[value_column], value_format, include_zero=True)
+
+    # Y-axis with optional category ordering
+    yaxis_extra = {"categoryorder": "total ascending"} if sort else {}
+
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
-        xaxis=dict(
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.1)",
-            tickformat=get_y_tickformat(value_format),
-        ),
-        yaxis=dict(
-            showgrid=False,
-            categoryorder="total ascending" if sort else None,
-        ),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
+        xaxis=get_axis_config(extra=x_tick_config),
+        yaxis=get_axis_config(extra=yaxis_extra),
         bargap=0.2,
-        margin=dict(l=120, r=30, t=80, b=80),  # Extra left margin for labels
+        margin=get_margin_config(left=MARGIN_LEFT_HBAR),
         showlegend=False,
     )
 
@@ -190,6 +218,7 @@ def stacked_bar_chart(
     title: str,
     subtitle: Optional[str] = None,
     horizontal: bool = False,
+    value_format: str = "number",
     source: Optional[str] = None,
     watermark: str = "tie",
 ) -> go.Figure:
@@ -202,6 +231,7 @@ def stacked_bar_chart(
         title: Chart title
         subtitle: Optional subtitle below title
         horizontal: If True, create horizontal stacked bars
+        value_format: Value format ('number', 'currency', 'percent')
         source: Optional source attribution
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
@@ -210,9 +240,13 @@ def stacked_bar_chart(
     """
     fig = go.Figure()
 
+    # Calculate stack totals for tick calculation (not individual values)
+    stack_totals = df[stack_columns].sum(axis=1).tolist()
+
     # Add trace for each stack segment
     for i, col in enumerate(stack_columns):
         color = colorway[i % len(colorway)]
+        hover_labels = [format_hover_value(v, value_format) for v in df[col]]
 
         if horizontal:
             fig.add_trace(
@@ -222,7 +256,8 @@ def stacked_bar_chart(
                     name=col,
                     orientation="h",
                     marker=dict(color=color),
-                    hovertemplate=f"<b>{col}</b>: %{{x:,.2f}}<extra></extra>",
+                    customdata=hover_labels,
+                    hovertemplate=f"<b>{col}</b>: %{{customdata}}<extra></extra>",
                 )
             )
         else:
@@ -232,34 +267,35 @@ def stacked_bar_chart(
                     y=df[col],
                     name=col,
                     marker=dict(color=color),
-                    hovertemplate=f"<b>{col}</b>: %{{y:,.2f}}<extra></extra>",
+                    customdata=hover_labels,
+                    hovertemplate=f"<b>{col}</b>: %{{customdata}}<extra></extra>",
                 )
             )
-
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
     if watermark == "none":
         template.layout.images = []  # Remove watermark but keep all styling
 
+    # Get formatted tick configuration for value axis (use stack totals, include_zero)
+    value_tick_config = get_tick_config(stack_totals, value_format, include_zero=True)
+
+    if horizontal:
+        xaxis_config = get_axis_config(extra=value_tick_config)
+        yaxis_config = get_axis_config()
+    else:
+        xaxis_config = get_axis_config()
+        yaxis_config = get_axis_config(extra=value_tick_config)
+
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
         barmode="stack",
-        xaxis=dict(showgrid=False if not horizontal else True, gridcolor="rgba(255,255,255,0.1)"),
-        yaxis=dict(showgrid=True if not horizontal else False, gridcolor="rgba(255,255,255,0.1)"),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-        ),
-        margin=dict(l=60 if not horizontal else 120, r=30, t=100, b=80),
+        xaxis=xaxis_config,
+        yaxis=yaxis_config,
+        legend=get_legend_config(),
+        margin=get_margin_config(left=MARGIN_LEFT_HBAR if horizontal else None),
     )
 
     # Configure hover
@@ -279,6 +315,7 @@ def grouped_bar_chart(
     group_columns: list[str],
     title: str,
     subtitle: Optional[str] = None,
+    value_format: str = "number",
     source: Optional[str] = None,
     watermark: str = "tie",
 ) -> go.Figure:
@@ -290,6 +327,7 @@ def grouped_bar_chart(
         group_columns: List of column names to group (2-3 recommended)
         title: Chart title
         subtitle: Optional subtitle below title
+        value_format: Value format ('number', 'currency', 'percent')
         source: Optional source attribution
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
@@ -298,49 +336,66 @@ def grouped_bar_chart(
     """
     fig = go.Figure()
 
+    # Collect all values for tick calculation
+    all_values = []
+    for col in group_columns:
+        all_values.extend(df[col].tolist())
+
+    # Only add bar labels if total bars ≤12 (per guide/07_text.md)
+    n_total_bars = len(df) * len(group_columns)
+    show_labels = n_total_bars <= 12
+    max_val = max(all_values) if all_values else 1
+    threshold = max_val * 0.15  # Bars < 15% of max get outside labels
+
     # Add trace for each group
     for i, col in enumerate(group_columns):
         color = colorway[i % len(colorway)]
+        hover_labels = [format_hover_value(v, value_format) for v in df[col]]
 
-        fig.add_trace(
-            go.Bar(
-                x=df[x_column],
-                y=df[col],
-                name=col,
-                marker=dict(color=color),
-                hovertemplate=f"<b>{col}</b>: %{{y:,.2f}}<extra></extra>",
-            )
+        trace_kwargs = dict(
+            x=df[x_column],
+            y=df[col],
+            name=col,
+            marker=dict(color=color),
+            customdata=hover_labels,
+            hovertemplate=f"<b>{col}</b>: %{{customdata}}<extra></extra>",
         )
 
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
+        if show_labels:
+            bar_labels = get_bar_labels(df[col], value_format)
+            text_positions = [
+                "inside" if v > threshold else "outside"
+                for v in df[col]
+            ]
+            trace_kwargs.update(
+                text=bar_labels,
+                textposition=text_positions,
+                textfont=dict(color="white"),
+                insidetextanchor="end",
+                cliponaxis=False,
+            )
+
+        fig.add_trace(go.Bar(**trace_kwargs))
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
     if watermark == "none":
         template.layout.images = []  # Remove watermark but keep all styling
 
+    # Get formatted tick configuration for y-axis (include_zero for bar charts)
+    y_tick_config = get_tick_config(all_values, value_format, include_zero=True)
+
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
         barmode="group",
-        xaxis=dict(showgrid=False),
-        yaxis=dict(
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.1)",
-        ),
+        xaxis=get_axis_config(),
+        yaxis=get_axis_config(extra=y_tick_config),
         bargap=0.15,
         bargroupgap=0.1,
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-        ),
-        margin=dict(l=60, r=30, t=100, b=80),
+        legend=get_legend_config(),
+        margin=get_margin_config(),
     )
 
     # Configure hover

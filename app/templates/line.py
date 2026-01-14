@@ -10,11 +10,18 @@ from .base import (
     colorway,
     get_template_tie,
     get_row_col,
-    format_with_B,
     add_source_annotation,
     add_updated_annotation,
     configure_hover,
-    get_y_tickformat,
+    get_base_font,
+    get_title_config,
+    get_axis_config,
+    get_legend_config,
+    get_margin_config,
+    build_subtitle,
+    # New formatting functions
+    get_tick_config,
+    format_hover_value,
 )
 
 
@@ -45,7 +52,10 @@ def line_chart(
     """
     fig = go.Figure()
 
-    # Add line trace
+    # Pre-format hover values
+    hover_labels = [format_hover_value(v, y_format) for v in df[y_column]]
+
+    # Add line trace (date shown once at top in unified hover mode)
     fig.add_trace(
         go.Scatter(
             x=df[x_column],
@@ -53,33 +63,26 @@ def line_chart(
             mode="lines",
             name=y_column,
             line=dict(width=2, color=colorway[0]),
-            hovertemplate="%{x|%b %d, %Y}<br>%{y:,.2f}<extra></extra>",
+            customdata=hover_labels,
+            hovertemplate="%{customdata}<extra></extra>",
         )
     )
-
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
     if watermark == "none":
         template.layout.images = []  # Remove watermark but keep all styling
 
+    # Get formatted tick configuration
+    y_tick_config = get_tick_config(df[y_column], y_format)
+
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
-        xaxis=dict(
-            showgrid=False,
-            tickformat="%b %Y",
-        ),
-        yaxis=dict(
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.1)",
-            tickformat=get_y_tickformat(y_format),
-        ),
-        margin=dict(l=60, r=30, t=80, b=80),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
+        xaxis=get_axis_config(tickformat="%b %Y"),
+        yaxis=get_axis_config(extra=y_tick_config),
+        margin=get_margin_config(),
         showlegend=False,
     )
 
@@ -143,21 +146,27 @@ def multi_line_chart(
                     # Index to 100 at start
                     plot_df[col] = (plot_df[col] / first_val) * 100
 
-    # Determine hover format based on normalization
-    if normalize_mode == 'returns':
-        hover_format = "%{y:+.1f}%"
-    elif normalize_mode == 'indexed':
-        hover_format = "%{y:,.0f}"
-    else:
-        hover_format = "%{y:,.2f}"
-
     # Use custom colors if provided, otherwise fall back to default colorway
     color_list = colors if colors else colorway
+
+    # Collect all values for tick calculation (non-normalized case)
+    all_values = []
+    for col in y_columns:
+        all_values.extend(plot_df[col].tolist())
 
     # Add traces for each series
     for i, col in enumerate(y_columns):
         color = color_list[i % len(color_list)]
 
+        # Format hover values based on mode
+        if normalize_mode == 'returns':
+            hover_labels = [f"{v:+.1f}%" for v in plot_df[col]]
+        elif normalize_mode == 'indexed':
+            hover_labels = [f"{v:,.0f}" for v in plot_df[col]]
+        else:
+            hover_labels = [format_hover_value(v, y_format) for v in plot_df[col]]
+
+        # Date shown once at top in unified hover mode
         fig.add_trace(
             go.Scatter(
                 x=plot_df[x_column],
@@ -165,14 +174,10 @@ def multi_line_chart(
                 mode="lines",
                 name=col,
                 line=dict(width=2, color=color),
-                hovertemplate=f"<b>{col}</b>: {hover_format}<extra></extra>",
+                customdata=hover_labels,
+                hovertemplate="%{customdata}<extra></extra>",
             )
         )
-
-    # Build title with optional subtitle
-    title_text = title
-    if subtitle:
-        title_text = f"{title}<br><span style='font-size:14px;color:#9ca3af'>{subtitle}</span>"
 
     # Apply template - always use token_labs styling, watermark controls only the logo
     template = get_template_tie(watermark if watermark != "none" else "tie")
@@ -182,39 +187,29 @@ def multi_line_chart(
     # Y-axis configuration based on normalization mode
     if normalize_mode == 'returns':
         y_title = "Cumulative Return (%)"
-        y_tickformat = "+.0f"
-        y_ticksuffix = "%"
+        yaxis_extra = {
+            "title": dict(text=y_title, font=dict(size=12)),
+            "tickformat": "+.0f",
+            "ticksuffix": "%",
+        }
     elif normalize_mode == 'indexed':
         y_title = "Indexed Value (Start = 100)"
-        y_tickformat = ",.0f"
-        y_ticksuffix = None
+        yaxis_extra = {
+            "title": dict(text=y_title, font=dict(size=12)),
+            "tickformat": ",.0f",
+        }
     else:
-        y_title = None
-        y_tickformat = get_y_tickformat(y_format)
-        y_ticksuffix = None
+        # Use B/M/k formatting for raw values
+        yaxis_extra = get_tick_config(all_values, y_format)
 
     fig.update_layout(
         template=template,
-        title=dict(text=title_text, x=0, xanchor="left"),
-        xaxis=dict(
-            showgrid=False,
-            tickformat="%b %Y",
-        ),
-        yaxis=dict(
-            title=y_title,
-            showgrid=True,
-            gridcolor="rgba(255,255,255,0.1)",
-            tickformat=y_tickformat,
-            ticksuffix=y_ticksuffix,
-        ),
-        legend=dict(
-            orientation="h",
-            yanchor="bottom",
-            y=1.02,
-            xanchor="left",
-            x=0,
-        ),
-        margin=dict(l=60, r=30, t=100, b=80),
+        font=get_base_font(),
+        title=get_title_config(build_subtitle(title, subtitle)),
+        xaxis=get_axis_config(tickformat="%b %Y"),
+        yaxis=get_axis_config(extra=yaxis_extra),
+        legend=get_legend_config(),
+        margin=get_margin_config(),
     )
 
     # Add reference line at 0% for returns mode
@@ -241,6 +236,7 @@ def small_multiples_chart(
     y_columns: list[str],
     title: str,
     cols: int = 2,
+    y_format: str = "number",
     source: Optional[str] = None,
     watermark: str = "tie",
 ) -> go.Figure:
@@ -252,6 +248,7 @@ def small_multiples_chart(
         y_columns: List of column names for y-axis series
         title: Main chart title
         cols: Number of columns in subplot grid (default 2)
+        y_format: Value format ('number', 'currency', 'percent')
         source: Optional source attribution
         watermark: Watermark type ('tie', 'labs', 'qf', 'none')
 
@@ -260,6 +257,11 @@ def small_multiples_chart(
     """
     n_series = len(y_columns)
     rows = (n_series + cols - 1) // cols
+
+    # Collect all values for tick calculation
+    all_values = []
+    for col in y_columns:
+        all_values.extend(df[col].tolist())
 
     # Create subplots
     fig = make_subplots(
@@ -275,6 +277,7 @@ def small_multiples_chart(
     # Add traces to each subplot
     for i, col in enumerate(y_columns):
         row, col_idx = get_row_col(i, cols)
+        hover_labels = [format_hover_value(v, y_format) for v in df[col]]
 
         fig.add_trace(
             go.Scatter(
@@ -284,7 +287,8 @@ def small_multiples_chart(
                 name=col,
                 line=dict(width=2, color=colorway[0]),
                 showlegend=False,
-                hovertemplate=f"<b>{col}</b><br>%{{x|%b %d}}: %{{y:,.2f}}<extra></extra>",
+                customdata=hover_labels,
+                hovertemplate=f"<b>{col}</b><br>%{{x|%b %d}}: %{{customdata}}<extra></extra>",
             ),
             row=row,
             col=col_idx,
@@ -297,15 +301,21 @@ def small_multiples_chart(
 
     fig.update_layout(
         template=template,
-        title=dict(text=title, x=0, xanchor="left"),
+        font=get_base_font(),
+        title=get_title_config(title),
         height=250 * rows,
         showlegend=False,
-        margin=dict(l=60, r=30, t=80, b=80),
+        margin=get_margin_config(),
     )
 
-    # Update all x and y axes
-    fig.update_xaxes(showgrid=False, tickformat="%b")
-    fig.update_yaxes(showgrid=True, gridcolor="rgba(255,255,255,0.1)")
+    # Get formatted tick configuration for y-axes
+    y_tick_config = get_tick_config(all_values, y_format)
+
+    # Update all x and y axes using shared config
+    x_config = get_axis_config(tickformat="%b")
+    y_config = get_axis_config(extra=y_tick_config)
+    fig.update_xaxes(**x_config)
+    fig.update_yaxes(**y_config)
 
     # Add annotations
     if source:
