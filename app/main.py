@@ -285,6 +285,12 @@ with col2:
         else:
             # Try to execute and render chart
             try:
+                # Import templates for exec context
+                from templates import (
+                    line_chart, multi_line_chart, small_multiples_chart,
+                    bar_chart, horizontal_bar_chart, stacked_bar_chart, grouped_bar_chart,
+                )
+
                 # Create execution namespace with data
                 exec_globals = {
                     "pd": pd,
@@ -294,13 +300,22 @@ with col2:
                     "make_subplots": __import__("plotly.subplots", fromlist=["make_subplots"]).make_subplots,
                     "Image": __import__("PIL", fromlist=["Image"]).Image,
                     "Path": __import__("pathlib").Path,
+                    # Template functions available directly
+                    "line_chart": line_chart,
+                    "multi_line_chart": multi_line_chart,
+                    "small_multiples_chart": small_multiples_chart,
+                    "bar_chart": bar_chart,
+                    "horizontal_bar_chart": horizontal_bar_chart,
+                    "stacked_bar_chart": stacked_bar_chart,
+                    "grouped_bar_chart": grouped_bar_chart,
                 }
 
                 # Remove fig.show() calls that would open new browser tabs
                 code_cleaned = re.sub(r'fig\.show\([^)]*\)', '# fig.show() removed', code)
 
-                # Fix template imports for exec context (app.templates -> templates)
-                code_cleaned = re.sub(r'from app\.templates', 'from templates', code_cleaned)
+                # Remove template imports since functions are already in exec_globals
+                code_cleaned = re.sub(r'from app\.templates import [^\n]+\n?', '', code_cleaned)
+                code_cleaned = re.sub(r'from templates import [^\n]+\n?', '', code_cleaned)
 
                 # Execute the code
                 exec(code_cleaned, exec_globals)
@@ -604,6 +619,11 @@ if session_id and st.session_state.get("generated_code"):
                     else:
                         try:
                             code = st.session_state["generated_code"]
+                            # Import templates for exec context
+                            from templates import (
+                                line_chart, multi_line_chart, small_multiples_chart,
+                                bar_chart, horizontal_bar_chart, stacked_bar_chart, grouped_bar_chart,
+                            )
                             exec_globals = {
                                 "pd": pd,
                                 "go": go,
@@ -614,9 +634,19 @@ if session_id and st.session_state.get("generated_code"):
                                 "Path": __import__("pathlib").Path,
                                 "datetime": __import__("datetime"),
                                 "math": __import__("math"),
+                                # Template functions available directly
+                                "line_chart": line_chart,
+                                "multi_line_chart": multi_line_chart,
+                                "small_multiples_chart": small_multiples_chart,
+                                "bar_chart": bar_chart,
+                                "horizontal_bar_chart": horizontal_bar_chart,
+                                "stacked_bar_chart": stacked_bar_chart,
+                                "grouped_bar_chart": grouped_bar_chart,
                             }
                             code_cleaned = re.sub(r'fig\.show\([^)]*\)', '', code)
-                            code_cleaned = re.sub(r'from app\.templates', 'from templates', code_cleaned)
+                            # Remove template imports since functions are already in exec_globals
+                            code_cleaned = re.sub(r'from app\.templates import [^\n]+\n?', '', code_cleaned)
+                            code_cleaned = re.sub(r'from templates import [^\n]+\n?', '', code_cleaned)
                             exec(code_cleaned, exec_globals)
                             if "fig" in exec_globals:
                                 # Use resolve() to ensure absolute path

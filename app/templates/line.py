@@ -64,7 +64,7 @@ def line_chart(
             name=y_column,
             line=dict(width=2, color=colorway[0]),
             customdata=hover_labels,
-            hovertemplate="%{customdata}<extra></extra>",
+            hovertemplate=f"<b>{y_column}</b>: %{{customdata}}<extra></extra>",
         )
     )
 
@@ -174,7 +174,7 @@ def multi_line_chart(
                 name=col,
                 line=dict(width=2, color=color),
                 customdata=hover_labels,
-                hovertemplate="%{customdata}<extra></extra>",
+                hovertemplate=f"<b>{col}</b>: %{{customdata}}<extra></extra>",
             )
         )
 

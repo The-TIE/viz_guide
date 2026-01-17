@@ -82,7 +82,7 @@ def bar_chart(
         y=plot_df[y_column],
         marker=dict(color=colorway[0]),
         customdata=hover_labels,
-        hovertemplate="%{x}: %{customdata}<extra></extra>",
+        hovertemplate="<b>%{x}</b>: %{customdata}<extra></extra>",
     )
     if bar_labels is not None:
         trace_kwargs.update(
@@ -173,7 +173,7 @@ def horizontal_bar_chart(
             insidetextanchor="end",
             textfont=dict(color="white"),
             customdata=hover_labels,
-            hovertemplate="%{y}: %{customdata}<extra></extra>",
+            hovertemplate="<b>%{y}</b>: %{customdata}<extra></extra>",
         )
     )
 

@@ -1,5 +1,6 @@
 """Data loading and synthetic data generation utilities."""
 
+import asyncio
 import io
 import json
 import os
@@ -7,13 +8,10 @@ import re
 from datetime import datetime, timedelta
 from pathlib import Path
 
-from dotenv import load_dotenv
-import anthropic
 import numpy as np
 import pandas as pd
 
-# Load .env file
-load_dotenv(Path(__file__).parent.parent / ".env")
+from claude_agent_sdk import query, ClaudeAgentOptions, AssistantMessage, TextBlock
 
 
 def load_csv(file) -> pd.DataFrame:
@@ -93,43 +91,43 @@ The code must:
 
 def generate_sample_data(description: str, api_key: str | None = None) -> pd.DataFrame:
     """
-    Generate synthetic data using AI based on description.
+    Generate synthetic data using Claude Agent SDK (keyless mode).
 
-    Falls back to keyword-based generation if API fails.
+    Falls back to keyword-based generation if SDK fails.
     """
-    api_key = api_key or os.environ.get("ANTHROPIC_API_KEY")
-
-    if not api_key:
-        # Fall back to keyword-based generation
-        return _generate_sample_data_keywords(description)
-
     try:
-        client = anthropic.Anthropic(api_key=api_key)
-
-        response = client.messages.create(
-            model="claude-haiku-4-5-20251001",  # Use Haiku for speed/cost
-            max_tokens=2048,
-            temperature=0.3,
-            messages=[{
-                "role": "user",
-                "content": DATA_GEN_PROMPT.format(description=description)
-            }]
-        )
-
-        code = _extract_code(response.content[0].text)
-
-        # Execute the code to get the DataFrame
-        exec_globals = {"np": np, "pd": pd, "datetime": datetime, "timedelta": timedelta}
-        exec(code, exec_globals)
-
-        if "df" in exec_globals and isinstance(exec_globals["df"], pd.DataFrame):
-            return exec_globals["df"]
-        else:
-            raise ValueError("Generated code did not create a 'df' DataFrame")
-
+        return asyncio.run(_generate_sample_data_async(description))
     except Exception as e:
         print(f"AI data generation failed: {e}, falling back to keyword-based")
         return _generate_sample_data_keywords(description)
+
+
+async def _generate_sample_data_async(description: str) -> pd.DataFrame:
+    """Async implementation using Claude Agent SDK."""
+    options = ClaudeAgentOptions(
+        system_prompt="You are a data generation assistant. Generate Python code that creates realistic sample data.",
+        max_turns=1,
+        model="haiku",  # Use Haiku for speed/cost
+        cwd=str(Path(__file__).parent.parent),
+    )
+
+    raw_response = ""
+    async for message in query(prompt=DATA_GEN_PROMPT.format(description=description), options=options):
+        if isinstance(message, AssistantMessage):
+            for block in message.content:
+                if isinstance(block, TextBlock):
+                    raw_response += block.text
+
+    code = _extract_code(raw_response)
+
+    # Execute the code to get the DataFrame
+    exec_globals = {"np": np, "pd": pd, "datetime": datetime, "timedelta": timedelta}
+    exec(code, exec_globals)
+
+    if "df" in exec_globals and isinstance(exec_globals["df"], pd.DataFrame):
+        return exec_globals["df"]
+    else:
+        raise ValueError("Generated code did not create a 'df' DataFrame")
 
 
 def _extract_code(response_text: str) -> str:
