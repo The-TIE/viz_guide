@@ -34,6 +34,7 @@ def line_chart(
     y_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a single line chart for time series trends.
 
@@ -80,7 +81,7 @@ def line_chart(
         template=template,
         font=get_base_font(),
         title=get_title_config(build_subtitle(title, subtitle)),
-        xaxis=get_axis_config(tickformat="%b %Y"),
+        xaxis=get_axis_config(),
         yaxis=get_axis_config(extra=y_tick_config),
         margin=get_margin_config(),
         showlegend=False,
@@ -107,6 +108,7 @@ def multi_line_chart(
     y_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a multi-line chart for comparing 2-5 series.
 
@@ -205,7 +207,7 @@ def multi_line_chart(
         template=template,
         font=get_base_font(),
         title=get_title_config(build_subtitle(title, subtitle)),
-        xaxis=get_axis_config(tickformat="%b %Y"),
+        xaxis=get_axis_config(),
         yaxis=get_axis_config(extra=yaxis_extra),
         legend=get_legend_config(),
         margin=get_margin_config(),
@@ -237,6 +239,7 @@ def small_multiples_chart(
     y_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a small multiples chart (subplot grid) for 6+ series.
 

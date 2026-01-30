@@ -35,6 +35,7 @@ def bar_chart(
     y_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a vertical bar chart.
 
@@ -134,6 +135,7 @@ def horizontal_bar_chart(
     value_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a horizontal bar chart for rankings and long labels.
 
@@ -219,6 +221,7 @@ def stacked_bar_chart(
     value_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a stacked bar chart for composition.
 
@@ -315,6 +318,7 @@ def grouped_bar_chart(
     value_format: str = "number",
     source: str = "The Tie",
     watermark: str = "tie",
+    **kwargs,
 ) -> go.Figure:
     """Create a grouped bar chart for comparing 2-3 measures.
 
